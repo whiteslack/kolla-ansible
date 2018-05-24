@@ -42,7 +42,7 @@ ovsdpdk_services:
       - "/etc/localtime:/etc/localtime:ro"
       - "/lib/modules:/lib/modules:ro"
       - "/run:/run:shared"
-      - "/dev:/dev:shared"
+      - "{{ovs_hugepage_mountpoint}}:{{ovs_hugepage_mountpoint}}:rw"
       - "kolla_logs:/var/log/kolla/"
 
 ####################
@@ -53,12 +53,13 @@ ovs_bridge_mappings: "{% for bridge in neutron_bridge_name.split(',') %}physnet{
 ovs_port_mappings: "{% for bridge in neutron_bridge_name.split(',') %} {{ neutron_external_interface.split(',')[loop.index0] }}:{{ bridge }}{% if not loop.last %},{% endif %}{% endfor %}"
 dpdk_tunnel_interface : "{{neutron_external_interface}}"
 dpdk_tunnel_interface_address: "{{ hostvars[inventory_hostname]['ansible_' + dpdk_tunnel_interface]['ipv4']['address'] }}"
-tunnel_interface_network: "{{ hostvars[inventory_hostname]['ansible_' + dpdk_tunnel_interface]['ipv4']['network']}}/{{hostvars[inventory_hostname]['ansible_' + dpdk_tunnel_interface]['ipv4']['netmask']}}"
-tunnel_interface_cidr: "{{dpdk_tunnel_interface_address}}/{{ tunnel_interface_network | ipaddr('prefix') }}"
-ovs_cidr_mappings: "{% if neutron_bridge_name.split(',')|length != 1 %} {neutron_bridge_name.split(',')[0]}:{{ tunnel_interface_cidr }} {% else %} {{ neutron_bridge_name }}:{{ tunnel_interface_cidr }} {% endif %}"
+dpdk_tunnel_interface_network: "{{ hostvars[inventory_hostname]['ansible_' + dpdk_tunnel_interface]['ipv4']['network']}}/{{hostvars[inventory_hostname]['ansible_' + dpdk_tunnel_interface]['ipv4']['netmask']}}"
+dpdk_tunnel_interface_cidr: "{{dpdk_tunnel_interface_address}}/{{ dpdk_tunnel_interface_network | ipaddr('prefix') }}"
+ovs_cidr_mappings: "{% if neutron_bridge_name.split(',')|length != 1 %} {neutron_bridge_name.split(',')[0]}:{{ dpdk_tunnel_interface_cidr }} {% else %} {{ neutron_bridge_name }}:{{ dpdk_tunnel_interface_cidr }} {% endif %}"
 ovs_mem_channels: 4
 ovs_socket_mem: 1024
 ovs_hugepage_mountpoint: /dev/hugepages
+dpdk_interface_drive: "uio_pci_generic"
 
 # ovs <2.7 required dpdk phyical port names to be index
 # in pci adress order as dpdkX where X is the index

@@ -86,9 +86,9 @@ function gen_config {
     set_value ovs hugepage_mountpoint ${hugepage_mountpoint:-"/dev/hugepages"}
     set_value ovs physical_port_policy ${ovs_physical_port_policy:-"named"}
 
-    ls -al /sys/class/net/* | awk '$0 ~ /pci/ {n=split($NF,a,"/"); print "\n[" a[n] "]\naddress = " a[n-2]  "\ndriver ="}' >> $CONFIG_FILE
-
-    for nic in $(get_value | grep -v ovs); do
+    pci_nics=$(ls -al /sys/class/net/ | awk '/pci/ {n=split($NF,a,"/"); print a[n]}')
+    for nic in ${pci_nics}; do
+        set_value $nic address $(get_address_by_name $nic)
         set_value $nic driver $(get_driver_by_address $(get_value $nic address))
     done
     for nic in $(list_dpdk_nics); do
@@ -144,11 +144,11 @@ function unbind_nics {
 }
 
 function get_address_by_name {
-    ls -al /sys/class/net/$1 | awk '$0 ~ /pci/ {n=split($NF,a,"/"); print a[n-2] }'
+    find /sys/devices/ -name $1 | awk '{n=split($NF,a,"/"); print a[n-2]}'
 }
 
 function get_driver_by_address {
-    ls /sys/bus/pci/devices/$1/driver -al | awk '{n=split($NF,a,"/"); print a[n]}'
+    find /sys/bus/pci/drivers -name $1 | awk -F/ '{ print $6;}'
 }
 
 function get_port_bridge {
@@ -179,6 +179,7 @@ function init_ovs_bridges {
     for pair in "${bridge_mappings[@]}"; do
         bridge=`echo $pair | cut -f 2 -d ":"`
         sudo ovs-vsctl --no-wait -- --may-exist add-br $bridge -- set Bridge $bridge datapath_type=netdev
+        sudo ifup $bridge
     done
 }
 
@@ -329,38 +330,45 @@ function uninstall_service {
     systemctl daemon-reload
 }
 
-function configure_kernel_modules {
-    driver="$(get_value ovs dpdk_interface_driver)"
-    lsmod | grep -ws $driver > /dev/null || modprobe $driver
+function configure_kernel_module {
+    lsmod | grep -ws ${1}  > /dev/null || modprobe ${1}
     if  [[ is_redhat_family == 0 ]]; then
-        [[ ! -e /etc/modules-load.d/${driver}.conf ]] && echo $driver | tee /etc/modules-load.d/${driver}.conf
+        [[ ! -e /etc/modules-load.d/${1}.conf ]] && echo $1 | tee /etc/modules-load.d/${1}.conf
     else
-        grep -ws $driver /etc/modules > /dev/null || echo $driver | tee -a /etc/modules
+        grep -ws ${1} /etc/modules > /dev/null || echo ${1}  | tee -a /etc/modules
+    fi
+}
+
+function configure_kernel_modules {
+    configure_kernel_module "openvswitch"
+    configure_kernel_module "$(get_value ovs cd ko)"
+}
+
+function unconfigure_kernel_module {
+    lsmod | grep -ws ${1} > /dev/null && rmmod ${1}
+    if [[ is_redhat_family == 0 ]] ; then
+        [[ -e /etc/modules-load.d/${1}.conf ]] && rm -f /etc/modules-load.d/${1}.conf
+    else
+        grep  -ws ${1} /etc/modules > /dev/null && sed -e "s/${1}//" -i /etc/modules
     fi
 }
 
 function unconfigure_kernel_modules {
-    driver="$(get_value ovs dpdk_interface_driver)"
-    lsmod | grep -ws $driver > /dev/null && rmmod $driver
-    if [[ is_redhat_family == 0 ]] ; then
-        [[ -e /etc/modules-load.d/${driver}.conf ]] && rm -f /etc/modules-load.d/${driver}.conf
-    else
-        grep  -ws $driver /etc/modules > /dev/null && sed -e "s/$driver//" -i /etc/modules
-    fi
+    unconfigure_kernel_module "openvswitch"
+    unconfigure_kernel_module "$(get_value ovs dpdk_interface_driver)"
 }
 
 function install {
+    if [ ! -e "$CONFIG_FILE" ]; then
+        gen_config
+    fi
     configure_kernel_modules
     if [ ! -e "$SERVICE_FILE" ]; then
         install_service
     fi
-    if [ ! -e /bin/ovs-dpdkctl ]; then
-        cp "$FULL_PATH" /bin/ovs-dpdkctl
-        chmod +x /bin/ovs-dpdkctl
-    fi
-    if [ ! -e "$CONFIG_FILE" ]; then
-        gen_config
-    fi
+
+    cp "$FULL_PATH" /bin/ovs-dpdkctl
+    chmod +x /bin/ovs-dpdkctl
     systemctl start ovs-dpdkctl
     install_network_manager_conf
     if  [[ is_redhat_family == 0 ]]; then

@@ -13,6 +13,7 @@
     volumes: "{{ service.volumes }}"
   when:
     - action != "config"
+    - action != "reconfigure"
     - service.enabled | bool
     - service.host_in_groups | bool
     - config_json | changed
@@ -67,6 +68,7 @@
     privileged: "{{ service.privileged | default(True) }}"
   when:
     - action != "config"
+    - action != "reconfigure"
     - service.enabled | bool
     - service.host_in_groups | bool
     - config_json | changed
